@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 
 import Layout from './components/Layout';
@@ -18,6 +18,7 @@ import { useAccounts } from './hooks/useAccounts';
 import { useTransactions } from './hooks/useTransactions';
 import { useStats } from './hooks/useStats';
 
+// Componente principal contendo as tabs do usuário autenticado
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [ready, setReady] = useState(false);
@@ -26,7 +27,7 @@ function MainApp() {
   const { transactions, addTransaction, deleteTransaction, refresh: refreshTransactions } = useTransactions();
   const stats = useStats();
 
-  // Load components after authentication
+  // Carrega os dados locais logo ao entrar na rota protegida
   useEffect(() => {
     refreshAccounts().then(() => setReady(true));
   }, [refreshAccounts]);
@@ -40,12 +41,7 @@ function MainApp() {
   if (!ready) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-xl font-bold animate-pulse text-white">
-            G
-          </div>
-          <p className="text-gray-500 text-sm">Carregando dados seguros...</p>
-        </div>
+        <p className="text-gray-500 text-sm animate-pulse">Sincronizando dados...</p>
       </div>
     );
   }
@@ -82,25 +78,29 @@ function MainApp() {
   );
 }
 
+// Configuração principal das Rotas
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
+    <BrowserRouter>
+      {/* AuthProvider deve vir dentro do BrowserRouter se quiser usar hooks de navegação internamente no contexto */}
+      <AuthProvider>
         <Routes>
-          {/* Public Routes */}
+          {/* Rotas Públicas */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
 
-          {/* Protected Routes */}
+          {/* Rotas Protegidas (Requer login via ProtectedRoute) */}
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<MainApp />} />
+            {/* Redirecionar /dashboard explicitamente para / */}
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
           </Route>
 
-          {/* Fallback */}
+          {/* Fallback de rotas desconhecidas ou protegidas vai depender do ProtectedRoute, ou volta pro inicio */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
