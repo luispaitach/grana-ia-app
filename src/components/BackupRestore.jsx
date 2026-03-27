@@ -1,19 +1,23 @@
 import { useState, useRef } from 'react';
 import { Download, Upload, Check, AlertCircle } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
 import db from '../db/database';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function BackupRestore({ onRefresh }) {
+  const { user } = useAuth();
   const [status, setStatus] = useState(null);
   const fileRef = useRef();
 
   const handleExport = async () => {
     try {
-      const accounts = await db.accounts.toArray();
-      const transactions = await db.transactions.toArray();
+      const accounts = await db.accounts.where('user_id').equals(user.id).toArray();
+      const transactions = await db.transactions.where('user_id').equals(user.id).toArray();
       const data = {
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
         app: 'GranaIA',
+        userId: user.id,
         accounts,
         transactions,
       };
@@ -40,29 +44,48 @@ export default function BackupRestore({ onRefresh }) {
         setStatus({ type: 'error', message: 'Arquivo não é um backup válido do GranaIA.' });
         return;
       }
-      // Clear existing data
-      await db.accounts.clear();
-      await db.transactions.clear();
+      
+      // Clear existing data for CURRENT USER only
+      await db.accounts.where('user_id').equals(user.id).delete();
+      await db.transactions.where('user_id').equals(user.id).delete();
+
+      const now = new Date().toISOString();
+
       // Import
       if (data.accounts?.length) {
-        // Remove ids to let Dexie auto-generate them if they conflict
         const accountIdMap = {};
+        const newAccounts = [];
         for (const acc of data.accounts) {
           const oldId = acc.id;
-          delete acc.id;
-          const newId = await db.accounts.add(acc);
+          const newId = uuidv4();
           accountIdMap[oldId] = newId;
+          newAccounts.push({
+            ...acc,
+            id: newId,
+            user_id: user.id, // Reassign to current user
+            sync_status: 'pending',
+            updated_at: now
+          });
         }
+        await db.accounts.bulkAdd(newAccounts);
+
         // Update transaction accountIds
         if (data.transactions?.length) {
           const txs = data.transactions.map(tx => {
-            const { id, ...rest } = tx;
-            return { ...rest, accountId: accountIdMap[tx.accountId] || tx.accountId };
+            const { id, user_id, ...rest } = tx;
+            return {
+              ...rest,
+              id: uuidv4(),
+              user_id: user.id, // Reassign to current user
+              sync_status: 'pending',
+              accountId: accountIdMap[tx.accountId] || tx.accountId,
+              updated_at: now
+            };
           });
           await db.transactions.bulkAdd(txs);
         }
       }
-      setStatus({ type: 'success', message: `Importado! ${data.accounts?.length || 0} contas e ${data.transactions?.length || 0} transações.` });
+      setStatus({ type: 'success', message: `Importado! Sincronizando no background...` });
       onRefresh?.();
     } catch (err) {
       setStatus({ type: 'error', message: 'Erro ao importar: ' + err.message });
@@ -91,7 +114,7 @@ export default function BackupRestore({ onRefresh }) {
             <Download size={24} />
           </div>
           <h3 className="font-semibold text-gray-200 mb-1">Exportar Dados</h3>
-          <p className="text-xs text-gray-500 mb-4">Salve uma cópia de todas as suas contas e transações em JSON.</p>
+          <p className="text-xs text-gray-500 mb-4">Salve uma cópia de todos os seus dados em formato JSON.</p>
           <button
             onClick={handleExport}
             className="w-full py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 text-sm font-medium hover:from-violet-500 hover:to-fuchsia-500 transition-all shadow-lg shadow-violet-500/20"
@@ -106,7 +129,7 @@ export default function BackupRestore({ onRefresh }) {
             <Upload size={24} />
           </div>
           <h3 className="font-semibold text-gray-200 mb-1">Importar Dados</h3>
-          <p className="text-xs text-gray-500 mb-4">Restaure dados de um arquivo de backup JSON existente.</p>
+          <p className="text-xs text-gray-500 mb-4">Restaure dados de um arquivo. <span className="text-red-400">Isso apagará seus registros atuais!</span></p>
           <input
             ref={fileRef}
             type="file"
@@ -121,13 +144,6 @@ export default function BackupRestore({ onRefresh }) {
             Importar JSON
           </button>
         </div>
-      </div>
-
-      {/* Info */}
-      <div className="bg-gray-800/20 rounded-2xl p-4 border border-gray-800/40 text-xs text-gray-500 space-y-1">
-        <p>ℹ️ Os dados são armazenados localmente no seu navegador usando IndexedDB.</p>
-        <p>ℹ️ A importação <strong className="text-gray-400">substitui</strong> todos os dados existentes.</p>
-        <p>ℹ️ Faça backups regulares para não perder seus dados.</p>
       </div>
     </div>
   );

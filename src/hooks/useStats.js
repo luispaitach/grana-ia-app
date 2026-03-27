@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import db from '../db/database';
 import { getCurrentMonthRange } from '../utils/formatters';
 import { categories } from '../utils/categories';
+import { useAuth } from '../contexts/AuthContext';
 
 export function useStats() {
+  const { user } = useAuth();
   const [stats, setStats] = useState({
     totalBalance: 0,
     monthExpenses: 0,
@@ -14,13 +16,10 @@ export function useStats() {
     categoryBreakdown: [],
   });
 
-  useEffect(() => {
-    computeStats();
-  }, []);
-
-  async function computeStats() {
-    const accounts = await db.accounts.toArray();
-    const allTransactions = await db.transactions.toArray();
+  const computeStats = useCallback(async () => {
+    if (!user) return;
+    const accounts = await db.accounts.where('user_id').equals(user.id).toArray();
+    const allTransactions = await db.transactions.where('user_id').equals(user.id).toArray();
     const { start, end } = getCurrentMonthRange();
 
     // Compute balance per account
@@ -99,7 +98,11 @@ export function useStats() {
       balanceHistory,
       categoryBreakdown,
     });
-  }
+  }, [user]);
+
+  useEffect(() => {
+    computeStats();
+  }, [computeStats]);
 
   return { ...stats, refresh: computeStats };
 }
