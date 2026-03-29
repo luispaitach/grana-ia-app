@@ -17,7 +17,7 @@ export default function TransactionForm({ accounts, onSubmit, onCancel }) {
     onSubmit({
       ...form,
       amount: parseFloat(form.amount),
-      accountId: Number(form.accountId),
+      accountId: form.accountId,
       date: new Date(form.date).toISOString(),
     });
     setForm(prev => ({ ...prev, amount: '', description: '' }));
