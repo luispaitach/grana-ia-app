@@ -4,6 +4,25 @@ import db from '../db/database';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
+// Converte os campos camelCase do código → snake_case do Supabase
+function toSupabase(account) {
+  const { initialBalance, sync_status, ...rest } = account;
+  return {
+    ...rest,
+    initial_balance: initialBalance ?? 0,
+  };
+}
+
+// Converte os campos snake_case do Supabase → camelCase do código
+function fromSupabase(account) {
+  const { initial_balance, ...rest } = account;
+  return {
+    ...rest,
+    initialBalance: initial_balance ?? 0,
+    sync_status: 'synced',
+  };
+}
+
 export function useAccounts() {
   const { user } = useAuth();
   const [accounts, setAccounts] = useState([]);
@@ -11,32 +30,29 @@ export function useAccounts() {
 
   const loadAccounts = useCallback(async () => {
     if (!user) return;
-    
+
     try {
-      // 1. Prioriza buscar contas ativas direto do Supabase
       const { data, error } = await supabase
         .from('accounts')
         .select('*')
         .eq('user_id', user.id);
-        
+
       if (!error && data) {
-         // Salva dados baixados no cache Local
         await db.transaction('rw', db.accounts, async () => {
           const pending = await db.accounts.where('sync_status').equals('pending').toArray();
           const pendingIds = new Set(pending.map(p => p.id));
-          
+
           const toPut = data
             .filter(d => !pendingIds.has(d.id))
-            .map(d => ({ ...d, sync_status: 'synced' }));
-            
+            .map(fromSupabase); // normaliza snake_case → camelCase
+
           await db.accounts.bulkPut(toPut);
         });
       }
     } catch (e) {
-      console.warn('Modo offline: Falha ao buscar Supabase. Usando contas do IndexedDB.', e);
+      console.warn('Modo offline: usando cache IndexedDB.', e);
     }
 
-    // 2. Transmite dados da UI lendo do Dexie
     const localData = await db.accounts.where('user_id').equals(user.id).toArray();
     setAccounts(localData);
     setLoading(false);
@@ -46,38 +62,41 @@ export function useAccounts() {
 
   const addAccount = async (account) => {
     if (!user) return;
+
     const newAccount = {
       ...account,
       id: uuidv4(),
       user_id: user.id,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
 
     let syncStatus = 'pending';
 
     try {
-      // Envia imediatamente para a nuvem
-      const { error } = await supabase.from('accounts').insert([newAccount]);
-      if (!error) {
+      const { data: inserted, error } = await supabase
+        .from('accounts')
+        .insert([toSupabase(newAccount)])
+        .select();
+
+      if (!error && inserted?.length > 0) {
         syncStatus = 'synced';
       } else {
-        console.error('Erro Supabase Insert de Conta:', error);
+        console.error('Erro Supabase Insert de Conta:', error, inserted);
       }
     } catch (e) {
       console.warn('Modo offline. Conta criada apenas no cache.');
     }
 
-    // Salva no banco local com o status correto
     await db.accounts.add({ ...newAccount, sync_status: syncStatus });
     await loadAccounts();
   };
 
   const updateAccount = async (id, changes) => {
     if (!user) return;
-    
+
     const updatedFields = {
       ...changes,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
 
     let syncStatus = 'pending';
@@ -85,17 +104,17 @@ export function useAccounts() {
     try {
       const { error } = await supabase
         .from('accounts')
-        .update(updatedFields)
+        .update(toSupabase(updatedFields))
         .eq('id', id)
         .eq('user_id', user.id);
-        
+
       if (!error) {
         syncStatus = 'synced';
       } else {
         console.error('Erro Supabase Update Conta:', error);
       }
     } catch (e) {
-      console.warn('Modo offline. Conta atualizada apenas no cache');
+      console.warn('Modo offline. Conta atualizada apenas no cache.');
     }
 
     await db.accounts.update(id, { ...updatedFields, sync_status: syncStatus });
@@ -104,12 +123,13 @@ export function useAccounts() {
 
   const deleteAccount = async (id) => {
     if (!user) return;
-    
+
     try {
       await supabase.from('accounts').delete().eq('id', id).eq('user_id', user.id);
-      await supabase.from('transactions').delete().eq('accountId', id).eq('user_id', user.id);
+      // Usa account_id (snake_case) na query do Supabase
+      await supabase.from('transactions').delete().eq('account_id', id).eq('user_id', user.id);
     } catch (e) {
-       console.warn('Modo offline. Deletando dados apenas no cache Dexie');
+      console.warn('Modo offline. Deletando apenas no cache Dexie.');
     }
 
     await db.accounts.delete(id);

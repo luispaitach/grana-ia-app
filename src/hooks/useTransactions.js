@@ -4,6 +4,16 @@ import db from '../db/database';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
+// Normaliza snake_case do Supabase → camelCase usado no código e no Dexie
+function fromSupabase(txn) {
+  const { account_id, ...rest } = txn;
+  return {
+    ...rest,
+    accountId: account_id ?? txn.accountId,
+    sync_status: 'synced',
+  };
+}
+
 export function useTransactions(filterAccountId = null) {
   const { user } = useAuth();
   const [transactions, setTransactions] = useState([]);
@@ -26,12 +36,7 @@ export function useTransactions(filterAccountId = null) {
 
           const toPut = data
             .filter(d => !pendingIds.has(d.id))
-            .map(d => ({
-              ...d,
-              // Normaliza account_id (Supabase) → accountId (Dexie)
-              accountId: d.account_id ?? d.accountId,
-              sync_status: 'synced',
-            }));
+            .map(fromSupabase); // normaliza account_id → accountId
 
           await db.transactions.bulkPut(toPut);
         });
@@ -90,7 +95,7 @@ export function useTransactions(filterAccountId = null) {
       console.warn('Modo offline. Transação salva localmente e enviada depois.');
     }
 
-    // Salva no Dexie com accountId (camelCase) — consistente com o índice
+    // Salva no Dexie com accountId (camelCase) — consistente com os índices
     await db.transactions.add({ ...newTransaction, sync_status: syncStatus });
     await loadTransactions();
   };
@@ -105,7 +110,6 @@ export function useTransactions(filterAccountId = null) {
 
     let syncStatus = 'pending';
 
-    // Converte accountId → account_id se presente
     const { accountId, ...restFields } = updatedFields;
     const supabaseFields = accountId
       ? { ...restFields, account_id: accountId }
