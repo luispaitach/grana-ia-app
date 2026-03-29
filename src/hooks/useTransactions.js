@@ -4,7 +4,6 @@ import db from '../db/database';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
-// Normaliza snake_case do Supabase → camelCase usado no código e no Dexie
 function fromSupabase(txn) {
   const { account_id, ...rest } = txn;
   return {
@@ -22,12 +21,17 @@ export function useTransactions(filterAccountId = null) {
   const loadTransactions = useCallback(async () => {
     if (!user) return;
 
+    console.log('[useTransactions] user.id:', user.id);
+
     try {
       const { data, error } = await supabase
         .from('transactions')
         .select('*')
         .eq('user_id', user.id)
         .order('date', { ascending: false });
+
+      console.log('[SUPABASE] error:', error);
+      console.log('[SUPABASE] data recebido:', data?.length, data);
 
       if (!error && data) {
         await db.transaction('rw', db.transactions, async () => {
@@ -36,27 +40,30 @@ export function useTransactions(filterAccountId = null) {
 
           const toPut = data
             .filter(d => !pendingIds.has(d.id))
-            .map(fromSupabase); // normaliza account_id → accountId
+            .map(fromSupabase);
 
+          console.log('[DEXIE] bulkPut com:', toPut.length, toPut);
           await db.transactions.bulkPut(toPut);
         });
       }
     } catch (e) {
-      console.warn('Modo offline: usando cache IndexedDB.', e);
+      console.warn('[OFFLINE] Falha ao buscar Supabase:', e);
     }
 
-    // Leitura do Dexie com ordenação correta em memória
-    let all = await db.transactions
+    const all = await db.transactions
       .where('user_id')
       .equals(user.id)
       .toArray();
 
-    all = all.sort((a, b) => new Date(b.date) - new Date(a.date));
+    console.log('[DEXIE] lido após sync:', all.length, all);
+
+    const sorted = all.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     const filtered = filterAccountId
-      ? all.filter(t => t.accountId === filterAccountId)
-      : all;
+      ? sorted.filter(t => t.accountId === filterAccountId)
+      : sorted;
 
+    console.log('[STATE] setTransactions com:', filtered.length);
     setTransactions(filtered);
     setLoading(false);
   }, [user, filterAccountId]);
@@ -76,7 +83,6 @@ export function useTransactions(filterAccountId = null) {
 
     let syncStatus = 'pending';
 
-    // Converte accountId → account_id para o Supabase (snake_case)
     const { accountId, ...rest } = newTransaction;
     const supabasePayload = { ...rest, account_id: accountId };
 
@@ -95,7 +101,6 @@ export function useTransactions(filterAccountId = null) {
       console.warn('Modo offline. Transação salva localmente e enviada depois.');
     }
 
-    // Salva no Dexie com accountId (camelCase) — consistente com os índices
     await db.transactions.add({ ...newTransaction, sync_status: syncStatus });
     await loadTransactions();
   };
