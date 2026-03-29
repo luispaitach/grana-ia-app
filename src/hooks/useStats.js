@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import db from '../db/database';
 import { getCurrentMonthRange } from '../utils/formatters';
 import { categories } from '../utils/categories';
-import { useAuth } from '../contexts/AuthContext';
 
-export function useStats() {
-  const { user } = useAuth();
+// Recebe accounts e transactions diretamente dos hooks pai
+// Recomputa automaticamente via useEffect quando os dados mudam
+export function useStats(accounts = [], transactions = []) {
   const [stats, setStats] = useState({
     totalBalance: 0,
     monthExpenses: 0,
@@ -16,71 +15,70 @@ export function useStats() {
     categoryBreakdown: [],
   });
 
-  const computeStats = useCallback(async () => {
-    if (!user) return;
-    const accounts = await db.accounts.where('user_id').equals(user.id).toArray();
-    const allTransactions = await db.transactions.where('user_id').equals(user.id).toArray();
+  const computeStats = useCallback(() => {
     const { start, end } = getCurrentMonthRange();
 
-    // Compute balance per account
+    // Saldo por conta
     const accountBalances = accounts.map(acc => {
-      const txs = allTransactions.filter(t => t.accountId === acc.id);
-      const income = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-      const expense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-      const balance = (acc.initialBalance || 0) + income - expense;
+      const txs = transactions.filter(t => t.accountId === acc.id);
+      const income  = txs.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+      const expense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+      const balance = (Number(acc.initialBalance) || 0) + income - expense;
       return { ...acc, balance, income, expense };
     });
 
     const totalBalance = accountBalances.reduce((s, a) => s + a.balance, 0);
 
-    // Month totals
-    const monthTxs = allTransactions.filter(t => {
+    // Totais do mês
+    const monthTxs = transactions.filter(t => {
       const d = new Date(t.date);
       return d >= start && d <= end;
     });
-    const monthExpenses = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-    const monthIncome = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const monthExpenses = monthTxs
+      .filter(t => t.type === 'expense')
+      .reduce((s, t) => s + Number(t.amount), 0);
+    const monthIncome = monthTxs
+      .filter(t => t.type === 'income')
+      .reduce((s, t) => s + Number(t.amount), 0);
 
-    // Top category this month
+    // Categoria com maior gasto no mês
     const catMap = {};
     monthTxs.filter(t => t.type === 'expense').forEach(t => {
-      catMap[t.category] = (catMap[t.category] || 0) + t.amount;
+      catMap[t.category] = (catMap[t.category] || 0) + Number(t.amount);
     });
+
     let topCategory = null;
     let topAmount = 0;
     for (const [catId, amount] of Object.entries(catMap)) {
       if (amount > topAmount) {
         topAmount = amount;
         const cat = categories.find(c => c.id === catId);
-        topCategory = { ...cat, amount };
+        topCategory = cat ? { ...cat, amount } : { id: catId, name: catId, icon: '📌', amount };
       }
     }
 
-    // Category breakdown for chart
+    // Breakdown por categoria para o gráfico
     const categoryBreakdown = categories
-      .map(cat => ({
-        ...cat,
-        amount: catMap[cat.id] || 0,
-      }))
+      .map(cat => ({ ...cat, amount: catMap[cat.id] || 0 }))
       .filter(c => c.amount > 0)
       .sort((a, b) => b.amount - a.amount);
 
-    // Balance history (last 30 days)
-    const sortedTxs = [...allTransactions].sort((a, b) => new Date(a.date) - new Date(b.date));
-    const balanceHistory = [];
-    let runningTotal = accounts.reduce((s, a) => s + (a.initialBalance || 0), 0);
+    // Histórico de saldo (últimos 30 dias)
+    const sortedTxs = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
+    let runningTotal = accounts.reduce((s, a) => s + (Number(a.initialBalance) || 0), 0);
     const dayMap = {};
 
     sortedTxs.forEach(t => {
       const day = new Date(t.date).toISOString().split('T')[0];
-      if (t.type === 'income') runningTotal += t.amount;
-      else runningTotal -= t.amount;
+      if (t.type === 'income')   runningTotal += Number(t.amount);
+      else                        runningTotal -= Number(t.amount);
       dayMap[day] = runningTotal;
     });
 
-    // Fill in the last 30 days
     const today = new Date();
-    let lastKnown = accounts.reduce((s, a) => s + (a.initialBalance || 0), 0);
+    let lastKnown = accounts.reduce((s, a) => s + (Number(a.initialBalance) || 0), 0);
+    const balanceHistory = [];
+
     for (let i = 29; i >= 0; i--) {
       const d = new Date(today);
       d.setDate(d.getDate() - i);
@@ -98,7 +96,7 @@ export function useStats() {
       balanceHistory,
       categoryBreakdown,
     });
-  }, [user]);
+  }, [accounts, transactions]); // recomputa sempre que os dados mudarem
 
   useEffect(() => {
     computeStats();

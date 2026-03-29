@@ -18,25 +18,25 @@ import { useAccounts } from './hooks/useAccounts';
 import { useTransactions } from './hooks/useTransactions';
 import { useStats } from './hooks/useStats';
 
-// Componente principal contendo as tabs do usuário autenticado
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [ready, setReady] = useState(false);
 
   const { accounts, addAccount, updateAccount, deleteAccount, refresh: refreshAccounts } = useAccounts();
   const { transactions, addTransaction, deleteTransaction, refresh: refreshTransactions } = useTransactions();
-  const stats = useStats();
 
-  // Carrega os dados locais logo ao entrar na rota protegida
+  // useStats agora recebe accounts e transactions diretamente
+  // e recomputa automaticamente quando eles mudam
+  const stats = useStats(accounts, transactions);
+
+  // Aguarda accounts E transactions sincronizarem antes de mostrar a UI
   useEffect(() => {
-    refreshAccounts().then(() => setReady(true));
-  }, [refreshAccounts]);
+    Promise.all([refreshAccounts(), refreshTransactions()]).then(() => setReady(true));
+  }, []); // roda só uma vez no mount
 
-  const refreshAll = useCallback(() => {
-    refreshAccounts();
-    refreshTransactions();
-    stats.refresh();
-  }, [refreshAccounts, refreshTransactions, stats]);
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshAccounts(), refreshTransactions()]);
+  }, [refreshAccounts, refreshTransactions]);
 
   if (!ready) {
     return (
@@ -78,26 +78,18 @@ function MainApp() {
   );
 }
 
-// Configuração principal das Rotas
 export default function App() {
   return (
     <BrowserRouter>
-      {/* AuthProvider deve vir dentro do BrowserRouter se quiser usar hooks de navegação internamente no contexto */}
       <AuthProvider>
         <Routes>
-          {/* Rotas Públicas */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
-
-          {/* Rotas Protegidas (Requer login via ProtectedRoute) */}
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<MainApp />} />
-            {/* Redirecionar /dashboard explicitamente para / */}
             <Route path="/dashboard" element={<Navigate to="/" replace />} />
           </Route>
-
-          {/* Fallback de rotas desconhecidas ou protegidas vai depender do ProtectedRoute, ou volta pro inicio */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
