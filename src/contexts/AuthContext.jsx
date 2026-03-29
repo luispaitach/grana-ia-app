@@ -48,7 +48,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signUp = async (email, password) => {
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const cleanEmail = email.trim().toLowerCase();
+    const { data, error } = await supabase.auth.signUp({ email: cleanEmail, password });
     if (error) throw error;
     
     // Cria 3 contas padrão para o usuário assim que registrar
@@ -67,7 +68,8 @@ export function AuthProvider({ children }) {
   };
 
   const signIn = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const cleanEmail = email.trim().toLowerCase();
+    const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
     // Limpa o Dexie local caso seja um usuário diferente logando
     if (!error && data?.user?.id !== user?.id) {
       await db.accounts.clear();
@@ -85,7 +87,8 @@ export function AuthProvider({ children }) {
   };
 
   const resetPassword = async (email) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    const cleanEmail = email.trim().toLowerCase();
+    const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
     if (error) throw error;
   };
 
