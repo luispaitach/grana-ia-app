@@ -109,17 +109,11 @@ export function AuthProvider({ children }) {
     const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
     if (error) throw error;
 
-    // ✅ Só limpa o cache se for um usuário DIFERENTE do que está no banco local
-    // Compara com o que está no Dexie, não com o estado do React (que pode ser null)
-    const localAccounts = await db.accounts.toArray();
-    const localUserId = localAccounts[0]?.user_id;
-
-    if (localUserId && localUserId !== data.user.id) {
-      // Usuário diferente — limpa cache do usuário anterior
-      await db.accounts.clear();
-      await db.transactions.clear();
-    }
-    // Se localUserId === null (Dexie vazio) ou mesmo usuário, NÃO limpa
+    // 🔥 Sempre limpa o banco de dados local após um login explícito bem sucedido.
+    // Isso garante que alterações (como deletar transações) feitas em outros dispositivos
+    // não reapareçam por estarem "presas" no cache Dexie.
+    await db.accounts.clear();
+    await db.transactions.clear();
 
     return data;
   };
@@ -128,9 +122,13 @@ export function AuthProvider({ children }) {
     // Flush dos pendentes antes de invalidar a sessão
     if (user?.id) await flushPendingToSupabase(user.id);
 
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn("Falha no signOut pelo Supabase (talvez offline), limpando cache local.", e);
+    }
 
+    // 🔥 Incondicionalmente limpa o banco na ação de logout.
     await db.accounts.clear();
     await db.transactions.clear();
   };
