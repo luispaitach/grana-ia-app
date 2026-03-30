@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 
 import Layout from './components/Layout';
@@ -18,27 +18,25 @@ import { useAccounts } from './hooks/useAccounts';
 import { useTransactions } from './hooks/useTransactions';
 import { useStats } from './hooks/useStats';
 
-function MainApp() {
+// Componente separado que só monta quando user já está disponível
+// Recebe o userId como prop para garantir que os hooks rodam com user correto
+function MainApp({ userId }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [ready, setReady] = useState(false);
-  const hasLoaded = useRef(false);
 
   const { accounts, addAccount, updateAccount, deleteAccount, refresh: refreshAccounts } = useAccounts();
   const { transactions, addTransaction, deleteTransaction, refresh: refreshTransactions } = useTransactions();
   const stats = useStats();
 
   useEffect(() => {
-    if (hasLoaded.current) return;
-    hasLoaded.current = true;
-
+    // Agora user já está garantido porque MainApp só monta com userId válido
+    // e os hooks já foram inicializados com o user correto
     Promise.all([
       refreshAccounts(),
       refreshTransactions(),
       stats.refresh(),
-    ]).then(() => {
-      setReady(true);
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    ]).then(() => setReady(true));
+  }, [userId]); // re-executa se trocar de usuário
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -89,6 +87,14 @@ function MainApp() {
   );
 }
 
+// Wrapper que lê o user do contexto e só passa para MainApp quando está pronto
+function AuthenticatedApp() {
+  const { user } = useAuth();
+  // Garantia extra: só renderiza MainApp quando user.id existe de verdade
+  if (!user?.id) return null;
+  return <MainApp userId={user.id} />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -98,7 +104,7 @@ export default function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<MainApp />} />
+            <Route path="/" element={<AuthenticatedApp />} />
             <Route path="/dashboard" element={<Navigate to="/" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
