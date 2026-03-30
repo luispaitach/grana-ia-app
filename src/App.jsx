@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -21,18 +21,23 @@ import { useStats } from './hooks/useStats';
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [ready, setReady] = useState(false);
+  const hasLoaded = useRef(false);
 
   const { accounts, addAccount, updateAccount, deleteAccount, refresh: refreshAccounts } = useAccounts();
   const { transactions, addTransaction, deleteTransaction, refresh: refreshTransactions } = useTransactions();
-  const stats = useStats(); // busca diretamente do Supabase
+  const stats = useStats();
 
   useEffect(() => {
-    // Carrega tudo em paralelo e só mostra a UI quando os três terminarem
+    if (hasLoaded.current) return;
+    hasLoaded.current = true;
+
     Promise.all([
       refreshAccounts(),
       refreshTransactions(),
       stats.refresh(),
-    ]).then(() => setReady(true));
+    ]).then(() => {
+      setReady(true);
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshAll = useCallback(async () => {

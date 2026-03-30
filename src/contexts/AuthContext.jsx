@@ -15,13 +15,42 @@ const defaultAccounts = [
   { name: 'PicPay', color: '#EF9F27', icon: '💚', initialBalance: 0, limit: 3000 },
 ];
 
+async function flushPendingToSupabase(userId) {
+  try {
+    const pendingAccounts = await db.accounts
+      .where('sync_status').equals('pending')
+      .filter(a => a.user_id === userId)
+      .toArray();
+
+    for (const acc of pendingAccounts) {
+      const { initialBalance, sync_status, ...rest } = acc;
+      const payload = { ...rest, initial_balance: initialBalance ?? 0 };
+      const { error } = await supabase.from('accounts').upsert(payload);
+      if (!error) await db.accounts.update(acc.id, { sync_status: 'synced' });
+    }
+
+    const pendingTxns = await db.transactions
+      .where('sync_status').equals('pending')
+      .filter(t => t.user_id === userId)
+      .toArray();
+
+    for (const txn of pendingTxns) {
+      const { accountId, sync_status, ...rest } = txn;
+      const payload = { ...rest, account_id: accountId };
+      const { error } = await supabase.from('transactions').upsert(payload);
+      if (!error) await db.transactions.update(txn.id, { sync_status: 'synced' });
+    }
+  } catch (e) {
+    console.warn('Flush de pendentes falhou:', e);
+  }
+}
+
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true); // Controla o estado de verificação inicial
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Busca a sessão atual quando o app inicializa
     const fetchSession = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
@@ -34,10 +63,9 @@ export function AuthProvider({ children }) {
         setLoading(false);
       }
     };
-    
+
     fetchSession();
 
-    // Fica escutando mudanças de auth (login, logout, etc)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -51,37 +79,58 @@ export function AuthProvider({ children }) {
     const cleanEmail = email.trim().toLowerCase();
     const { data, error } = await supabase.auth.signUp({ email: cleanEmail, password });
     if (error) throw error;
-    
-    // Cria 3 contas padrão para o usuário assim que registrar
+
     if (data?.user) {
       const now = new Date().toISOString();
       const accountsToCreate = defaultAccounts.map(acc => ({
-        ...acc,
         id: uuidv4(),
         user_id: data.user.id,
-        sync_status: 'pending',
-        updated_at: now
+        name: acc.name,
+        color: acc.color,
+        icon: acc.icon,
+        updated_at: now,
       }));
-      await db.accounts.bulkAdd(accountsToCreate);
+
+      for (const acc of accountsToCreate) {
+        const { error: insErr } = await supabase.from('accounts').insert(acc);
+        await db.accounts.add({
+          ...acc,
+          initialBalance: 0,
+          sync_status: insErr ? 'pending' : 'synced',
+        });
+      }
     }
+
     return data;
   };
 
   const signIn = async (email, password) => {
     const cleanEmail = email.trim().toLowerCase();
     const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password });
-    // Limpa o Dexie local caso seja um usuário diferente logando
-    if (!error && data?.user?.id !== user?.id) {
+    if (error) throw error;
+
+    // ✅ Só limpa o cache se for um usuário DIFERENTE do que está no banco local
+    // Compara com o que está no Dexie, não com o estado do React (que pode ser null)
+    const localAccounts = await db.accounts.toArray();
+    const localUserId = localAccounts[0]?.user_id;
+
+    if (localUserId && localUserId !== data.user.id) {
+      // Usuário diferente — limpa cache do usuário anterior
       await db.accounts.clear();
       await db.transactions.clear();
     }
-    if (error) throw error;
+    // Se localUserId === null (Dexie vazio) ou mesmo usuário, NÃO limpa
+
     return data;
   };
 
   const signOut = async () => {
+    // Flush dos pendentes antes de invalidar a sessão
+    if (user?.id) await flushPendingToSupabase(user.id);
+
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
+
     await db.accounts.clear();
     await db.transactions.clear();
   };
@@ -95,14 +144,13 @@ export function AuthProvider({ children }) {
   const value = {
     session,
     user,
-    loading, // Exposto para usarmos no ProtectedRoute
+    loading,
     signUp,
     signIn,
     signOut,
     resetPassword,
   };
 
-  // Importante: Passamos os children sempre, o bloqueio real será no ProtectedRoute
   return (
     <AuthContext.Provider value={value}>
       {children}
