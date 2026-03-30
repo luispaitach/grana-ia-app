@@ -1,9 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getCurrentMonthRange } from '../utils/formatters';
 import { categories } from '../utils/categories';
 
-// Recebe accounts e transactions diretamente dos hooks pai
-// Recomputa automaticamente via useEffect quando os dados mudam
 export function useStats(accounts = [], transactions = []) {
   const [stats, setStats] = useState({
     totalBalance: 0,
@@ -15,10 +13,18 @@ export function useStats(accounts = [], transactions = []) {
     categoryBreakdown: [],
   });
 
-  const computeStats = useCallback(() => {
+  // Usa ref para comparar se os dados realmente mudaram (evita loops infinitos)
+  const prevKey = useRef('');
+
+  useEffect(() => {
+    // Gera uma chave baseada no conteúdo real dos dados
+    // Só recomputa se accounts ou transactions mudaram de verdade
+    const key = `${accounts.length}:${transactions.length}:${transactions.reduce((s, t) => s + Number(t.amount), 0)}`;
+    if (key === prevKey.current) return;
+    prevKey.current = key;
+
     const { start, end } = getCurrentMonthRange();
 
-    // Saldo por conta
     const accountBalances = accounts.map(acc => {
       const txs = transactions.filter(t => t.accountId === acc.id);
       const income  = txs.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
@@ -29,11 +35,11 @@ export function useStats(accounts = [], transactions = []) {
 
     const totalBalance = accountBalances.reduce((s, a) => s + a.balance, 0);
 
-    // Totais do mês
     const monthTxs = transactions.filter(t => {
       const d = new Date(t.date);
       return d >= start && d <= end;
     });
+
     const monthExpenses = monthTxs
       .filter(t => t.type === 'expense')
       .reduce((s, t) => s + Number(t.amount), 0);
@@ -41,7 +47,6 @@ export function useStats(accounts = [], transactions = []) {
       .filter(t => t.type === 'income')
       .reduce((s, t) => s + Number(t.amount), 0);
 
-    // Categoria com maior gasto no mês
     const catMap = {};
     monthTxs.filter(t => t.type === 'expense').forEach(t => {
       catMap[t.category] = (catMap[t.category] || 0) + Number(t.amount);
@@ -57,21 +62,19 @@ export function useStats(accounts = [], transactions = []) {
       }
     }
 
-    // Breakdown por categoria para o gráfico
     const categoryBreakdown = categories
       .map(cat => ({ ...cat, amount: catMap[cat.id] || 0 }))
       .filter(c => c.amount > 0)
       .sort((a, b) => b.amount - a.amount);
 
-    // Histórico de saldo (últimos 30 dias)
     const sortedTxs = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
     let runningTotal = accounts.reduce((s, a) => s + (Number(a.initialBalance) || 0), 0);
     const dayMap = {};
 
     sortedTxs.forEach(t => {
       const day = new Date(t.date).toISOString().split('T')[0];
-      if (t.type === 'income')   runningTotal += Number(t.amount);
-      else                        runningTotal -= Number(t.amount);
+      if (t.type === 'income') runningTotal += Number(t.amount);
+      else runningTotal -= Number(t.amount);
       dayMap[day] = runningTotal;
     });
 
@@ -96,11 +99,11 @@ export function useStats(accounts = [], transactions = []) {
       balanceHistory,
       categoryBreakdown,
     });
-  }, [accounts, transactions]); // recomputa sempre que os dados mudarem
+  }, [accounts, transactions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    computeStats();
-  }, [computeStats]);
+  const refresh = useCallback(() => {
+    prevKey.current = ''; // força recomputação no próximo render
+  }, []);
 
-  return { ...stats, refresh: computeStats };
+  return { ...stats, refresh };
 }
