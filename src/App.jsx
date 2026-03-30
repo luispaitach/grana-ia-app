@@ -20,28 +20,40 @@ import { useStats } from './hooks/useStats';
 
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [ready, setReady] = useState(false);
+
+  // initialData guarda o resultado direto do Supabase antes do setState do React
+  // Começa como null para indicar "ainda carregando"
+  const [initialData, setInitialData] = useState(null);
 
   const { accounts, addAccount, updateAccount, deleteAccount, refresh: refreshAccounts } = useAccounts();
   const { transactions, addTransaction, deleteTransaction, refresh: refreshTransactions } = useTransactions();
 
-  // useStats recebe accounts e transactions diretamente — recomputa automaticamente
-  const stats = useStats(accounts, transactions);
+  // Usa initialData enquanto o React não propagou os estados dos hooks
+  // Depois que os hooks atualizam (accounts/transactions mudam), usa esses
+  const effectiveAccounts = accounts.length > 0 ? accounts : (initialData?.accounts ?? []);
+  const effectiveTransactions = transactions.length > 0 ? transactions : (initialData?.transactions ?? []);
+
+  const stats = useStats(effectiveAccounts, effectiveTransactions);
 
   useEffect(() => {
-    // Aguarda os dois hooks buscarem do Supabase E atualizarem o estado
-    // antes de exibir qualquer tela — resolve a condição de corrida no primeiro login
     Promise.all([
       refreshAccounts(),
       refreshTransactions(),
-    ]).then(() => setReady(true));
-  }, []); // roda só uma vez no mount
+    ]).then(([loadedAccounts, loadedTransactions]) => {
+      // Guarda os dados retornados diretamente — disponíveis antes do setState propagar
+      setInitialData({
+        accounts: loadedAccounts ?? [],
+        transactions: loadedTransactions ?? [],
+      });
+    });
+  }, []);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshAccounts(), refreshTransactions()]);
   }, [refreshAccounts, refreshTransactions]);
 
-  if (!ready) {
+  // Só mostra o spinner enquanto o initialData não chegou
+  if (!initialData) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center flex-col gap-3">
         <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
@@ -52,11 +64,11 @@ function MainApp() {
 
   return (
     <Layout activeTab={activeTab} onTabChange={setActiveTab}>
-      {activeTab === 'dashboard' && <Dashboard stats={stats} accounts={accounts} />}
+      {activeTab === 'dashboard' && <Dashboard stats={stats} accounts={effectiveAccounts} />}
       {activeTab === 'transactions' && (
         <TransactionList
-          transactions={transactions}
-          accounts={accounts}
+          transactions={effectiveTransactions}
+          accounts={effectiveAccounts}
           onDelete={deleteTransaction}
           onAdd={addTransaction}
           onRefresh={refreshAll}
@@ -64,7 +76,7 @@ function MainApp() {
       )}
       {activeTab === 'accounts' && (
         <AccountsManager
-          accounts={accounts}
+          accounts={effectiveAccounts}
           onAdd={addAccount}
           onUpdate={updateAccount}
           onDelete={deleteAccount}
@@ -72,7 +84,7 @@ function MainApp() {
       )}
       {activeTab === 'ai' && (
         <AIInput
-          accounts={accounts}
+          accounts={effectiveAccounts}
           onAddTransaction={addTransaction}
           onRefresh={refreshAll}
         />
