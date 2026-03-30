@@ -24,14 +24,15 @@ function MainApp() {
 
   const { accounts, addAccount, updateAccount, deleteAccount, refresh: refreshAccounts } = useAccounts();
   const { transactions, addTransaction, deleteTransaction, refresh: refreshTransactions } = useTransactions();
-
-  // useStats agora recebe accounts e transactions diretamente
-  // e recomputa automaticamente quando eles mudam
   const stats = useStats(accounts, transactions);
 
-  // Aguarda accounts E transactions sincronizarem antes de mostrar a UI
   useEffect(() => {
-    Promise.all([refreshAccounts(), refreshTransactions()]).then(() => setReady(true));
+    // Aguarda accounts E transactions sincronizarem com o Supabase
+    // antes de renderizar qualquer tela — evita dashboard zerado no primeiro login
+    Promise.all([
+      refreshAccounts(),
+      refreshTransactions(),
+    ]).then(() => setReady(true));
   }, []); // roda só uma vez no mount
 
   const refreshAll = useCallback(async () => {
@@ -40,8 +41,9 @@ function MainApp() {
 
   if (!ready) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <p className="text-gray-500 text-sm animate-pulse">Sincronizando dados...</p>
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center flex-col gap-3">
+        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-gray-500 text-sm">Sincronizando dados...</p>
       </div>
     );
   }
