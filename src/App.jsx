@@ -20,40 +20,30 @@ import { useStats } from './hooks/useStats';
 
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
-
-  // initialData guarda o resultado direto do Supabase antes do setState do React
-  // Começa como null para indicar "ainda carregando"
-  const [initialData, setInitialData] = useState(null);
+  const [ready, setReady] = useState(false);
 
   const { accounts, addAccount, updateAccount, deleteAccount, refresh: refreshAccounts } = useAccounts();
   const { transactions, addTransaction, deleteTransaction, refresh: refreshTransactions } = useTransactions();
-
-  // Usa initialData enquanto o React não propagou os estados dos hooks
-  // Depois que os hooks atualizam (accounts/transactions mudam), usa esses
-  const effectiveAccounts = accounts.length > 0 ? accounts : (initialData?.accounts ?? []);
-  const effectiveTransactions = transactions.length > 0 ? transactions : (initialData?.transactions ?? []);
-
-  const stats = useStats(effectiveAccounts, effectiveTransactions);
+  const stats = useStats(); // busca diretamente do Supabase
 
   useEffect(() => {
+    // Carrega tudo em paralelo e só mostra a UI quando os três terminarem
     Promise.all([
       refreshAccounts(),
       refreshTransactions(),
-    ]).then(([loadedAccounts, loadedTransactions]) => {
-      // Guarda os dados retornados diretamente — disponíveis antes do setState propagar
-      setInitialData({
-        accounts: loadedAccounts ?? [],
-        transactions: loadedTransactions ?? [],
-      });
-    });
-  }, []);
+      stats.refresh(),
+    ]).then(() => setReady(true));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshAccounts(), refreshTransactions()]);
-  }, [refreshAccounts, refreshTransactions]);
+    await Promise.all([
+      refreshAccounts(),
+      refreshTransactions(),
+      stats.refresh(),
+    ]);
+  }, [refreshAccounts, refreshTransactions, stats.refresh]);
 
-  // Só mostra o spinner enquanto o initialData não chegou
-  if (!initialData) {
+  if (!ready) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center flex-col gap-3">
         <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
@@ -64,11 +54,11 @@ function MainApp() {
 
   return (
     <Layout activeTab={activeTab} onTabChange={setActiveTab}>
-      {activeTab === 'dashboard' && <Dashboard stats={stats} accounts={effectiveAccounts} />}
+      {activeTab === 'dashboard' && <Dashboard stats={stats} accounts={accounts} />}
       {activeTab === 'transactions' && (
         <TransactionList
-          transactions={effectiveTransactions}
-          accounts={effectiveAccounts}
+          transactions={transactions}
+          accounts={accounts}
           onDelete={deleteTransaction}
           onAdd={addTransaction}
           onRefresh={refreshAll}
@@ -76,7 +66,7 @@ function MainApp() {
       )}
       {activeTab === 'accounts' && (
         <AccountsManager
-          accounts={effectiveAccounts}
+          accounts={accounts}
           onAdd={addAccount}
           onUpdate={updateAccount}
           onDelete={deleteAccount}
@@ -84,7 +74,7 @@ function MainApp() {
       )}
       {activeTab === 'ai' && (
         <AIInput
-          accounts={effectiveAccounts}
+          accounts={accounts}
           onAddTransaction={addTransaction}
           onRefresh={refreshAll}
         />

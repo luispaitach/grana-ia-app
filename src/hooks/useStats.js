@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { getCurrentMonthRange } from '../utils/formatters';
 import { categories } from '../utils/categories';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 
-export function useStats(accounts = [], transactions = []) {
+export function useStats() {
+  const { user } = useAuth();
   const [stats, setStats] = useState({
     totalBalance: 0,
     monthExpenses: 0,
@@ -13,43 +16,55 @@ export function useStats(accounts = [], transactions = []) {
     categoryBreakdown: [],
   });
 
-  // Usa ref para comparar se os dados realmente mudaram (evita loops infinitos)
-  const prevKey = useRef('');
+  const refresh = useCallback(async () => {
+    if (!user) return;
 
-  useEffect(() => {
-    // Gera uma chave baseada no conteúdo real dos dados
-    // Só recomputa se accounts ou transactions mudaram de verdade
-    const key = `${accounts.length}:${transactions.length}:${transactions.reduce((s, t) => s + Number(t.amount), 0)}`;
-    if (key === prevKey.current) return;
-    prevKey.current = key;
+    // Busca direto do Supabase — sem depender de estado de outros hooks
+    const [{ data: accounts }, { data: transactions }] = await Promise.all([
+      supabase.from('accounts').select('*').eq('user_id', user.id),
+      supabase.from('transactions').select('*').eq('user_id', user.id),
+    ]);
+
+    if (!accounts || !transactions) return;
+
+    // Normaliza campos
+    const accs = accounts.map(a => ({
+      ...a,
+      initialBalance: Number(a.initial_balance) || 0,
+    }));
+    const txns = transactions.map(t => ({
+      ...t,
+      accountId: t.account_id,
+      amount: Number(t.amount),
+    }));
 
     const { start, end } = getCurrentMonthRange();
 
-    const accountBalances = accounts.map(acc => {
-      const txs = transactions.filter(t => t.accountId === acc.id);
-      const income  = txs.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
-      const expense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
-      const balance = (Number(acc.initialBalance) || 0) + income - expense;
+    const accountBalances = accs.map(acc => {
+      const txs = txns.filter(t => t.accountId === acc.id);
+      const income  = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+      const expense = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+      const balance = acc.initialBalance + income - expense;
       return { ...acc, balance, income, expense };
     });
 
     const totalBalance = accountBalances.reduce((s, a) => s + a.balance, 0);
 
-    const monthTxs = transactions.filter(t => {
+    const monthTxs = txns.filter(t => {
       const d = new Date(t.date);
       return d >= start && d <= end;
     });
 
     const monthExpenses = monthTxs
       .filter(t => t.type === 'expense')
-      .reduce((s, t) => s + Number(t.amount), 0);
+      .reduce((s, t) => s + t.amount, 0);
     const monthIncome = monthTxs
       .filter(t => t.type === 'income')
-      .reduce((s, t) => s + Number(t.amount), 0);
+      .reduce((s, t) => s + t.amount, 0);
 
     const catMap = {};
     monthTxs.filter(t => t.type === 'expense').forEach(t => {
-      catMap[t.category] = (catMap[t.category] || 0) + Number(t.amount);
+      catMap[t.category] = (catMap[t.category] || 0) + t.amount;
     });
 
     let topCategory = null;
@@ -67,19 +82,19 @@ export function useStats(accounts = [], transactions = []) {
       .filter(c => c.amount > 0)
       .sort((a, b) => b.amount - a.amount);
 
-    const sortedTxs = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
-    let runningTotal = accounts.reduce((s, a) => s + (Number(a.initialBalance) || 0), 0);
+    const sortedTxs = [...txns].sort((a, b) => new Date(a.date) - new Date(b.date));
+    let runningTotal = accs.reduce((s, a) => s + a.initialBalance, 0);
     const dayMap = {};
 
     sortedTxs.forEach(t => {
       const day = new Date(t.date).toISOString().split('T')[0];
-      if (t.type === 'income') runningTotal += Number(t.amount);
-      else runningTotal -= Number(t.amount);
+      if (t.type === 'income') runningTotal += t.amount;
+      else runningTotal -= t.amount;
       dayMap[day] = runningTotal;
     });
 
     const today = new Date();
-    let lastKnown = accounts.reduce((s, a) => s + (Number(a.initialBalance) || 0), 0);
+    let lastKnown = accs.reduce((s, a) => s + a.initialBalance, 0);
     const balanceHistory = [];
 
     for (let i = 29; i >= 0; i--) {
@@ -99,11 +114,7 @@ export function useStats(accounts = [], transactions = []) {
       balanceHistory,
       categoryBreakdown,
     });
-  }, [accounts, transactions]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const refresh = useCallback(() => {
-    prevKey.current = ''; // força recomputação no próximo render
-  }, []);
+  }, [user]);
 
   return { ...stats, refresh };
 }
