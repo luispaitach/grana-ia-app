@@ -1,12 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import db from '../db/database';
 import { useAuth } from '../contexts/AuthContext';
 
-export function useSync() {
+export function useSync(onSyncComplete) {
   const { user } = useAuth();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
+  const callbackRef = useRef(onSyncComplete);
+
+  useEffect(() => {
+    callbackRef.current = onSyncComplete;
+  }, [onSyncComplete]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -94,6 +99,7 @@ export function useSync() {
       console.error('Falha na sincronização:', err);
     } finally {
       setIsSyncing(false);
+      if (callbackRef.current) callbackRef.current();
     }
   }, [user, isOnline]);
 

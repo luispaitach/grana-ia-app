@@ -11,9 +11,9 @@ const tabs = [
   { id: 'backup', label: 'Backup', icon: Download },
 ];
 
-export default function Layout({ activeTab, onTabChange, children }) {
+export default function Layout({ activeTab, onTabChange, onSyncComplete, children }) {
   const { user, signOut } = useAuth();
-  const { isOnline, isSyncing } = useSync();
+  const { isOnline, isSyncing } = useSync(onSyncComplete);
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-gray-100">

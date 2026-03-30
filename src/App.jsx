@@ -56,7 +56,7 @@ function MainApp({ userId }) {
   }
 
   return (
-    <Layout activeTab={activeTab} onTabChange={setActiveTab}>
+    <Layout activeTab={activeTab} onTabChange={setActiveTab} onSyncComplete={refreshAll}>
       {activeTab === 'dashboard' && <Dashboard stats={stats} accounts={accounts} />}
       {activeTab === 'transactions' && (
         <TransactionList
