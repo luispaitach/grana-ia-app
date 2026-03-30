@@ -9,6 +9,7 @@ function fromSupabase(txn) {
   return {
     ...rest,
     accountId: account_id ?? txn.accountId,
+    amount: Number(rest.amount), // garante número, não string
     sync_status: 'synced',
   };
 }
@@ -18,10 +19,9 @@ export function useTransactions(filterAccountId = null) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Retorna os dados diretamente para o Promise.all do App.jsx
   const loadTransactions = useCallback(async () => {
-    if (!user) return;
-
-    console.log('[useTransactions] user.id:', user.id);
+    if (!user) return [];
 
     try {
       const { data, error } = await supabase
@@ -30,49 +30,42 @@ export function useTransactions(filterAccountId = null) {
         .eq('user_id', user.id)
         .order('date', { ascending: false });
 
-      console.log('[SUPABASE] error:', error);
-      console.log('[SUPABASE] data recebido:', data?.length, data);
-
       if (!error && data) {
         await db.transaction('rw', db.transactions, async () => {
           const pending = await db.transactions.where('sync_status').equals('pending').toArray();
           const pendingIds = new Set(pending.map(p => p.id));
-
           const toPut = data
             .filter(d => !pendingIds.has(d.id))
             .map(fromSupabase);
-
-          console.log('[DEXIE] bulkPut com:', toPut.length, toPut);
           await db.transactions.bulkPut(toPut);
         });
       }
     } catch (e) {
-      console.warn('[OFFLINE] Falha ao buscar Supabase:', e);
+      console.warn('Modo offline: usando cache IndexedDB.', e);
     }
 
-    const all = await db.transactions
+    let all = await db.transactions
       .where('user_id')
       .equals(user.id)
       .toArray();
 
-    console.log('[DEXIE] lido após sync:', all.length, all);
-
-    const sorted = all.sort((a, b) => new Date(b.date) - new Date(a.date));
+    all = all
+      .map(t => ({ ...t, amount: Number(t.amount) })) // normaliza amount do cache também
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
 
     const filtered = filterAccountId
-      ? sorted.filter(t => t.accountId === filterAccountId)
-      : sorted;
+      ? all.filter(t => t.accountId === filterAccountId)
+      : all;
 
-    console.log('[STATE] setTransactions com:', filtered.length);
     setTransactions(filtered);
     setLoading(false);
+    return filtered; // retorna os dados para o Promise.all do App.jsx
   }, [user, filterAccountId]);
 
   useEffect(() => { loadTransactions(); }, [loadTransactions]);
 
   const addTransaction = async (transaction) => {
     if (!user) return;
-
     const newTransaction = {
       ...transaction,
       id: uuidv4(),
@@ -80,18 +73,14 @@ export function useTransactions(filterAccountId = null) {
       date: transaction.date || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-
     let syncStatus = 'pending';
-
     const { accountId, ...rest } = newTransaction;
     const supabasePayload = { ...rest, account_id: accountId };
-
     try {
       const { data: inserted, error } = await supabase
         .from('transactions')
         .insert([supabasePayload])
         .select();
-
       if (!error && inserted?.length > 0) {
         syncStatus = 'synced';
       } else {
@@ -100,33 +89,27 @@ export function useTransactions(filterAccountId = null) {
     } catch (e) {
       console.warn('Modo offline. Transação salva localmente e enviada depois.');
     }
-
     await db.transactions.add({ ...newTransaction, sync_status: syncStatus });
     await loadTransactions();
   };
 
   const updateTransaction = async (id, changes) => {
     if (!user) return;
-
     const updatedFields = {
       ...changes,
       updated_at: new Date().toISOString(),
     };
-
     let syncStatus = 'pending';
-
     const { accountId, ...restFields } = updatedFields;
     const supabaseFields = accountId
       ? { ...restFields, account_id: accountId }
       : restFields;
-
     try {
       const { error } = await supabase
         .from('transactions')
         .update(supabaseFields)
         .eq('id', id)
         .eq('user_id', user.id);
-
       if (!error) {
         syncStatus = 'synced';
       } else {
@@ -135,24 +118,17 @@ export function useTransactions(filterAccountId = null) {
     } catch (e) {
       console.warn('Modo offline. Atualização salva localmente.');
     }
-
     await db.transactions.update(id, { ...updatedFields, sync_status: syncStatus });
     await loadTransactions();
   };
 
   const deleteTransaction = async (id) => {
     if (!user) return;
-
     try {
-      await supabase
-        .from('transactions')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id);
+      await supabase.from('transactions').delete().eq('id', id).eq('user_id', user.id);
     } catch (e) {
       console.warn('Modo offline ao excluir. Deletado apenas localmente.');
     }
-
     await db.transactions.delete(id);
     await loadTransactions();
   };

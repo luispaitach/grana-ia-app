@@ -24,11 +24,13 @@ function MainApp() {
 
   const { accounts, addAccount, updateAccount, deleteAccount, refresh: refreshAccounts } = useAccounts();
   const { transactions, addTransaction, deleteTransaction, refresh: refreshTransactions } = useTransactions();
+
+  // useStats recebe accounts e transactions diretamente — recomputa automaticamente
   const stats = useStats(accounts, transactions);
 
   useEffect(() => {
-    // Aguarda accounts E transactions sincronizarem com o Supabase
-    // antes de renderizar qualquer tela — evita dashboard zerado no primeiro login
+    // Aguarda os dois hooks buscarem do Supabase E atualizarem o estado
+    // antes de exibir qualquer tela — resolve a condição de corrida no primeiro login
     Promise.all([
       refreshAccounts(),
       refreshTransactions(),
